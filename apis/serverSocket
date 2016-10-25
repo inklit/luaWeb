@@ -1,0 +1,74 @@
+--a serverSocket wrapper based on BTC's code and written by GabbeV on SwitchCraft
+
+local sockets = {}
+
+local count = 1
+function open(conf)
+    local soc = {
+        soc = socket.connect(conf.ip,conf.port),
+        status = 'connecting',
+    }
+    if conf.id then
+        soc.id = conf.id
+    else
+        while sockets[count] do
+            count = count+1
+        end
+        soc.id = count
+        count = count+1
+    end
+    sockets[#sockets+1] = soc
+end
+
+function write(index,msg)
+    sockets[index].soc.write(msg)
+end
+
+function remove(index)
+    local soc = sockets[index]
+    os.queueEvent('tcp_closed',soc.id,index)
+    soc.soc.close()
+    sockets[index] = sockets[#sockets]
+    sockets[#sockets] = nil
+end
+
+function close(index)
+    sockets[index].status = 'closed'
+end
+
+function step()
+    for i=#sockets,1,-1 do
+        if sockets[i].status=='closed' then
+            remove(i)
+        end
+    end
+    for i=1,#sockets do
+        local soc = sockets[i]
+        if soc.status=='connecting' then
+            if soc.soc.checkConnected() then
+                os.queueEvent('tcp_open',soc.id,i)
+                soc.status = 'open'
+            else
+                os.queueEvent('tcp_connecting',soc.id,i)
+            end
+        elseif soc.status=='open' then
+            if soc.soc.checkConnected() then
+                local msg = soc.soc.read()
+                if msg and #msg>0 then
+                    os.queueEvent('tcp_message',soc.id,i,msg)
+                end
+            else
+                soc.status = 'closed'
+            end
+        end
+    end
+end
+
+function newSocket(id, ip, port)
+    print('creating new socket '..id)
+    open({
+        ip = ip,
+        port = port,
+        id = id
+    })
+end

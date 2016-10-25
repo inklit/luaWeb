@@ -1,0 +1,76 @@
+os.loadAPI('apis/serverSocket')
+os.loadAPI('apis/httpHelper')
+local iniParser = dofile("apis/iniParser")
+config = iniParser.load("config.ini")
+
+for i=1,4 do
+  serverSocket.newSocket(i, config.proxy.host, config.proxy.port)
+end
+
+local timer = os.startTimer(0.1)
+while true do
+    local event,id,socIndex,data = os.pullEvent()
+    if event=='timer' and id==timer then
+        serverSocket.step()
+        timer = os.startTimer(0.1)
+    elseif event=='tcp_connecting' then
+        print('socket '..id..' is connecting')
+    elseif event=='tcp_open' then
+        print('socket '..id..' is open')
+    elseif event=='tcp_closed' then
+        print('socket '..id..' closed')
+        serverSocket.newSocket(id, config.proxy.host, config.proxy.port)
+    elseif event=='tcp_message' then
+        req = httpHelper.parseRequest(data)
+        if req.protocol ~= "HTTP/1.1" then
+            serverSocket.write(socIndex, httpHelper.qResp(505))
+            serverSocket.close(socIndex)
+        elseif req.method ~= "GET" and req.method ~= "PUT" and req.method ~= "OPTIONS" then
+            serverSocket.write(socIndex, httpHelper.qResp(501))
+            serverSocket.close(socIndex)
+        else
+            req.vfile = req.file
+            req.file = config.http.htdocs .. req.file
+            
+            if req.method == "PUT" then
+                if config.http.allowPUT then
+                    local h = fs.open(req.file, "w")
+                    h.write(string.match(data,'[\r]?\n[\r]?\n(.*)'))
+                    h.close()
+                    serverSocket.write(socIndex, httpHelper.qResp(200))
+                    serverSocket.close(socIndex)
+                else
+                    serverSocket.write(socIndex, httpHelper.qResp(501))
+                    serverSocket.close(socIndex)
+                end
+            end
+            if req.method == "OPTIONS" then
+                serverSocket.write(socIndex, "HTTP/1.1 200 OK\r\nServer: luaWeb\r\nConnection: close\r\nContent-Type: text/plain\r\nAllow: PUT\r\nAccess-Control-Allow-Methods: PUT\r\n")
+                serverSocket.close(socIndex)
+            end
+            if req.method == "GET" then
+                if fs.isDir(req.file) then
+                    if fs.exists(req.file .. "/" .. config.http.index) then
+                        req.file = req.file .. "/" .. config.http.index
+                        serverSocket.write(socIndex, httpHelper.serveFile(req.file, config.http.parseLua))
+                        serverSocket.close(socIndex)
+                    elseif config.http.dirListings then
+                        serverSocket.write(socIndex, httpHelper.doDirListing(req.file, req.vfile))
+                        serverSocket.close(socIndex)
+                    else
+                        serverSocket.write(socIndex, httpHelper.qResp(404))
+                        serverSocket.close(socIndex)
+                    end
+                else
+                    if fs.exists(req.file) then
+                        serverSocket.write(socIndex, httpHelper.serveFile(req.file, config.http.parseLua))
+                        serverSocket.close(socIndex)
+                    else
+                        serverSocket.write(socIndex, httpHelper.qResp(404))
+                        serverSocket.close(socIndex)
+                    end
+                end
+            end
+        end
+    end
+end

@@ -1,0 +1,76 @@
+-- an INI file parsing library by apemanzilla
+
+local module = {}
+
+-- loads data from an INI-formatted file into a table
+-- eg - myfile.ini:
+--  [section1]
+--  a = b
+--  b = 1
+--  [section2]
+--  c = true
+-- will produce...
+--  { section1 = { a = "b", b = 1 }, section2 = { c = true } }
+function module.load(file)
+	-- basic error prevention
+	assert(type(file) == "string", "expected string")
+	if not fs.exists(file) then
+		return {}
+	end
+	if fs.isDir(file) then
+		return {}
+	end
+
+	-- load file data
+	local f = fs.open(file, "r")
+	local data = f.readAll()
+	f.close()
+
+	-- parse file data
+	local ini = {}
+	local section = nil
+	for line in data:gmatch("([^\n^\r]+)") do
+		local s = line:match("^%[([^%]]+)%]$")
+		if s then
+			section = s
+			ini[section] = ini[section] or {}
+		end
+		local key, value = line:match("^([%w-_]+)%s*=%s*(.+)$")
+		if key and value then
+			if tonumber(key) then key = tonumber(key) end
+			if tonumber(value) then value = tonumber(value) end
+			if value == "true" then value = true end
+			if value == "false" then value = false end
+			ini[section][key] = value
+		end
+	end
+	return ini
+end
+
+local HEADER = "[%s]\n"
+local ENTRY = "%s = %s\n"
+
+-- writes a table of data to an INI-formatted file
+-- files WILL be overwritten
+function module.save(tbl, file)
+	-- basic error prevention
+	assert(type(tbl) == "table", "expected table, string")
+	assert(type(file) == "string", "expected table, string")
+	if fs.exists(file) and fs.isReadOnly(file) then
+		error("output path is read only", 2)
+	end
+
+	-- write data
+	local f = fs.open(file, "w")
+	for s, t in pairs(tbl) do
+		if type(t) == "table" then
+			f.write(HEADER:format(s))
+			for k, v in pairs(t) do
+				f.write(ENTRY:format(tostring(k), tostring(v)))
+			end
+		end
+	end
+	f.close()
+end
+
+return module

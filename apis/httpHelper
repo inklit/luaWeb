@@ -1,0 +1,113 @@
+    
+function parseRequest(request)
+    request_method = request:sub(1, request:find(" ") -1)
+    request_file = request:sub(request:find(" ") +1,request:find(" ",request_method:len() +2) -1)
+    request_protocol = request:sub(request_method:len()+request_file:len()+3,request:find("\r\n") -1)
+    --for word in request:gmatch("[^\r\n]+") do
+        --print(word) --todo allow scripts to access this info
+    --end
+    return {
+        method = request_method,
+        file = request_file,
+        protocol = request_protocol
+    }
+end
+
+function generateResponse(code1, body1, iserr1, ctype1, head1)
+    local server1 = "luaWeb"
+    local ctype1 = ctype1 or "text/html"
+    local iserr1 = iserr1 or false
+    local head1 = head1 or body1
+    
+    if iserr1 then
+        return "HTTP/1.1 "..code1.." "..head1.."\r\nServer: "..server1.."\r\nConnection: close\r\nContent-Type: "..ctype1.."\r\n\r\n<hr><h2>"..body1.."</h2><hr>"
+    else
+        return "HTTP/1.1 "..code1.." "..head1.."\r\nServer: "..server1.."\r\nConnection: close\r\nContent-Type: "..ctype1.."\r\n\r\n" .. body1
+    end
+end
+
+function qResp(err)
+    if err == 501 then
+        return httpHelper.generateResponse(501, "Not Implemented", true)
+    end
+    if err == 505 then
+        return httpHelper.generateResponse(505, "HTTP Version Not Supported", true)
+    end
+    if err == 404 then
+        return httpHelper.generateResponse(404, "Not Found", true)
+    end
+    if err == 200 then
+        return httpHelper.generateResponse(200, "hello world!", false, "text/plain", "Generic 200!")
+    end
+end
+
+function serveFile(rfile, execLua)
+    execLua = execLua or false
+    if execLua and rfile:sub(-4) == ".lua" then
+        -- exec lua
+        local ctype = "text/html"
+        local body = ''
+        local code = 200
+        local chead = "OK"
+        local function sctype(str)
+            ctype = str
+        end
+        local function schead(str)
+            chead = str
+        end
+        local function scode(int)
+            code = int
+        end
+        local function write(str)
+            body = body..'\n\r'..str
+        end
+        
+        local env = {
+            print=write,
+            sctype=ctype,
+            schead=chead,
+            scode=scode
+        }
+        setmetatable(env,{__index=_G})
+        os.run(env,rfile)
+        return generateResponse(code, body, false, ctype, chead)
+    else
+        mimes = {}
+        mimes["default"] = "text/plain"
+        mimes["html"] = "text/html"
+        mimes["png"] = "image/png"
+        mimes["jpg"] = "image/jpeg"
+        mimes["lua"] = "text/html"
+        mimes["gif"] = "image/gif"
+        mimes["js"] = "text/javascript"
+        local s = string.reverse(rfile)
+        local filetype = "default"
+        if s:find("%.") ~= nil then
+            filetype = string.reverse(s:sub(0, s:find("%.") -1))
+        end
+        
+        local file = fs.open(rfile, "r")
+        resp = generateResponse(200, file.readAll(), false, mimes[filetype] or mimes["default"], "OK")
+        file.close()
+        return resp
+    end
+end
+
+function doDirListing(dir, vdir)
+    body = "<hr><h2>Directory Listing for " .. vdir .. "</h2><hr><br><a href='"..vdir.."/../'>..</a><br>"
+    files = fs.list(dir)
+    for k,v in ipairs(files) do
+        request_file3 = vdir     
+        if vdir:sub(-1,1) == "/" and vdir ~= "/" then
+            request_file2 = vdir:sub(1,vdir:find("/")-1)
+        else
+            request_file2 = vdir
+        end
+        if vdir == "/" then
+            request_file2 = ""
+            vdir = ""
+        end
+        body = body .. "<a href='"..vdir.."/"..v.."'>"..request_file2.."/"..v.."</a><br>"
+    end
+    return generateResponse(200, body, false, "text/html", "OK")
+end
